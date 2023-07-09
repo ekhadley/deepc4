@@ -1,0 +1,1 @@
+# Deep learning of Connect4 through self play

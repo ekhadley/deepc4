@@ -86,7 +86,10 @@ def observe(board):
     return obs
 
 def printBoard(board):
-    str = ""
+    str = gray
+    for i in range(board.shape[1]):
+        str += f" {i} "
+    str += "\n"
     for row in board:
         for col in row:
             if col == 1: str += green + " O "

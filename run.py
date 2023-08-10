@@ -7,10 +7,10 @@ from tqdm import trange
 from c4 import *
 from agent import vpoAgent
 import wandb
-np.set_printoptions(suppress=True)
+np.set_printoptions(suppress=True, linewidth=200, precision=4)
 
 
-def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardSize, recordExperience=True, show=False, seed=None):
+def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardSize, wMask, recordExperience=True, show=False, seed=None):
     r = np.random.uniform(0, 1) if seed is None else seed
     if r >= 0.5:
         players = [learner, opponent]
@@ -28,7 +28,7 @@ def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardSize, recordExperien
         state = player.observe(board)
         dist, action = player.chooseAction(state, allowT)
         board = player.drop(board, action)
-        val = value(board)
+        val = value(board, wMask)
         if show:
             print(gray, dist.probs.detach().numpy()[0], endc)
             printBoard(board)
@@ -43,7 +43,7 @@ def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardSize, recordExperien
     if recordExperience: return states, allowed, actions, turn, val, dist
     return turn, val
 
-def playWithUser(agent, seed=None):
+def playWithUser(agent, wMask, seed=None):
     if isinstance(agent, str):
         agent = vpoAgent((6,7), lr=0.001, stationary=True, color=1, cuda=False)
         agent.load(agent)
@@ -65,7 +65,7 @@ def playWithUser(agent, seed=None):
             dist, action = agent.chooseAction(state, allowT)
             board = agent.drop(board, action)
             print(f"{gray}{dist.probs.detach().numpy()[0]}{endc}")
-            val = value(board)
+            val = value(board, wMask)
             if val != 0:
                 print(bold, red, "the agent wins!", endc)
                 printBoard(board)
@@ -80,7 +80,7 @@ def playWithUser(agent, seed=None):
                     validinp = True
                 except:
                     print(red, f"invalid input. receieved: {inp}(type:{type(inp)})", endc)
-            val = value(board)
+            val = value(board, wMask)
             if val != 0:
                 print(bold, green, "the user wins!", endc)
                 printBoard(board)
@@ -104,6 +104,7 @@ def train(saveDir,
           boardSize=(6,7),
           showTestGames=True,
           cuda=False):
+    wMask = winMask(boardSize)
 
     r = vpoAgent(boardSize, lr=lr, stationary=True, color=1, cuda=cuda)
     r.save(saveDir, "0") # save a random policy to be the first opponent
@@ -123,7 +124,7 @@ def train(saveDir,
         opponent.loadPolicy(opponents[opIdx])
         desc += f"VSing agent#{opIdx}/{len(opponents)-1}"
         
-        states, allowed, actions, numTurns, val, dist = playAgentGame(learner, opponent, boardSize, show=False)
+        states, allowed, actions, numTurns, val, dist = playAgentGame(learner, opponent, boardSize, wMask, show=False)
         #desc += f"{gray}{dist.probs.detach().numpy()[0]}{endc}"
         
         nt = len(actions)
@@ -139,7 +140,7 @@ def train(saveDir,
             score = 0
             opponent.loadPolicy(opponents[-1])
             for midx in (mrange:=trange(numTestGames, ncols=80, unit="games", ascii=" >=")):
-                numTurns, val_ = playAgentGame(learner, opponent, boardSize, recordExperience=False, show=showTestGames, seed=midx/numTestGames)
+                numTurns, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames, seed=midx/numTestGames)
                 score += val_
                 matchWR = (score/(midx+1) + 1)/2
                 beatBest = matchWR >= wrThresh
@@ -155,9 +156,9 @@ def train(saveDir,
             for op in range(len(opponents)):
                 opponent.loadPolicy(opponents[op])
                 for _ in range(numTestGames):
-                    numTurns_, val_ = playAgentGame(learner, opponent, boardSize, recordExperience=False, show=showTestGames)
+                    numTurns_, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames)
                     scores[op] += val_
-            playWithUser(learner)
+            playWithUser(learner, wMask)
             plt.plot(scores)
             plt.show()
 

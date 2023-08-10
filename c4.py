@@ -33,7 +33,7 @@ def diags(board, minLen=1):
     h, w = board.shape
     return [np.diagonal(board, i) for i in range(-h+minLen, w-minLen+1)]
 
-def value(board, connect=4):
+def value_(board, connect=4):
     bh, bw = board.shape
     h_p1, v_p1 = 0, 0
     h_p2, v_p2 = 0, 0
@@ -58,8 +58,8 @@ def value(board, connect=4):
         if v_p1 == 4: return 1
         if v_p2 == 4: return -1
 
-    diag1 = diags(board, minLen=connect)
-    for d in diag1:
+    for didx in range(-bh+connect, bw-connect+1):
+        d = np.diagonal(board, didx)
         d_p1, d_p2 = 0, 0
         for e in d:
             if e == 1: d_p1 += 1
@@ -67,14 +67,54 @@ def value(board, connect=4):
             if d_p1 == 4: return 1
             if d_p2 == 4: return -1
     
-    diag2 = diags(np.flip(board, axis=0), minLen=connect)
-    for d in diag2:
-        dt_p1, dt_p2 = 0, 0
+    bflip = np.flip(board, axis=0)
+    for didx in range(-bw+connect, bh-connect+1):
+        d = np.diagonal(bflip, didx)
+        d_p1, d_p2 = 0, 0
         for e in d:
-            if e == 1: dt_p1 += 1
-            if e == -1: dt_p2 += 1
-            if dt_p1 == 4: return 1
-            if dt_p2 == 4: return -1
+            if e == 1: d_p1 += 1
+            if e == -1: d_p2 += 1
+            if d_p1 == 4: return 1
+            if d_p2 == 4: return -1
+    return 0
+
+def winMask(shape, cnct=4):
+    h, w = shape
+    #numMasks = h*(w-cnct+1) + w*(h-cnct+1) + (abs(-h+cnct - w-cnct+1)) + (abs(-w+cnct - h-cnct+1))
+    numMasks = h*(w-cnct+1) + w*(h-cnct+1) + 2*(h-cnct+1)*(w-cnct+1)
+    masks = np.zeros((numMasks, h, w))
+    count = 0
+    for r in range(h): # finds all horizontal connect masks
+        for c in range(w-cnct+1):
+            p = np.ones((1, cnct))
+            m = np.pad(p, ((r,h-r-1),(c, w-c-cnct)), constant_values=False)
+            masks[count] += m
+            count += 1
+    
+    for r in range(h-cnct+1): # finds all vertical connect masks
+        for c in range(w):
+            p = np.ones((cnct, 1))
+            m = np.pad(p, ((r,h-r-cnct),(c,w-c-1)), constant_values=False)
+            masks[count] += m
+            count += 1
+
+    for r in range(h-cnct+1): # finds all diagonal masks
+        for c in range(w-cnct+1):
+            d = np.eye(cnct)
+            m = np.pad(d, ((r,h-r-cnct),(c, w-c-cnct)), constant_values=False)
+            masks[count] += m
+            masks[count+1] += np.flip(m, axis=1)
+            count += 2
+
+    return masks
+
+def value(board, mask=None):
+    mask = winMask(board.shape) if mask is None else mask
+    val1 = np.sum(board*mask, axis=(1,2)) > 3
+    val2 = np.sum(board*mask, axis=(1,2)) < -3
+    v1, v2 = np.sum(val1), np.sum(val2)
+    if v1: return 1
+    if v2: return -1
     return 0
 
 def observe(board):
@@ -98,3 +138,4 @@ def printBoard(board):
         str += "\n"
     str += endc
     print(str)
+

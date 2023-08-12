@@ -40,8 +40,8 @@ class policy(nn.Module):
         
         if self.cuda_: self.to("cuda")
 
-        self.opt = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=.001, betas=(0.99, 0.99) if stationary else None)
-        #self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.0003)
+        self.opt = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=.006, betas=(0.99, 0.99) if stationary else None)
+        #self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.006)
 
     def forward(self, X:torch.Tensor, allowed:torch.Tensor):
         if self.cuda_: X, allowed = X.to("cuda"), allowed.to("cuda")

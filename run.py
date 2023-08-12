@@ -73,13 +73,16 @@ def playWithUser(agent, wMask, seed=None):
         else:
             msg = f"{blue}enter move {np.where(allow)}:\n{endc}"
             validinp = False
+            fails = 0
             while not validinp:
                 try:
-                    inp = int(input(msg))
-                    board = drop(board, inp, -1)
+                    inp = input(msg)
+                    board = drop(board, int(inp), -1)
                     validinp = True
                 except:
+                    fails += 1
                     print(red, f"invalid input. receieved: {inp}(type:{type(inp)})", endc)
+                    assert fails < 11, "too many invalid inputs, erroring out"
             val = value(board, wMask)
             if val != 0:
                 print(bold, green, "the user wins!", endc)
@@ -88,7 +91,7 @@ def playWithUser(agent, wMask, seed=None):
 
         printBoard(board)
         print()
-    return -255
+    return 255
 
 def train(saveDir,
           numGames=1_000_000,
@@ -113,25 +116,26 @@ def train(saveDir,
     opponent = vpoAgent(boardSize, lr=lr, stationary=True, color=-1, cuda=cuda) # initialize the first opponent to be trained against
 
     config = {"modelShape": learner.policy, "numGames":numGames, "opponentSamplingWeight":opponentSamplingWeight, "trainEvery":trainEvery, "discount":discount, "testEvery":testEvery, "lr":lr, "numTestGames":numTestGames, "wrThresh":wrThresh, "boardSize":boardSize, "showTestGames":showTestGames, "optimizer":learner.policy.opt.state_dict(), "leaky_acts":learner.policy.leaky, "valueScale":valueScale}
-    wandb.init(project="vpoc4", config=config, dir="D:\\wgmn\\wandb\\vpoc4")
+    wandb.init(project="vpoc4", config=config, dir="D:\\wgmn\\")
     wandb.watch(learner.policy, log="all", log_freq=10)
 
     beatBest, matchWR, loss = False, 0, 0
     opponents = [r.stateDict()] # we keep the previous best models' state_dicts
     for game in (t:=trange(numGames, ncols=140, unit="games")):
         desc = blue + bold
-        opIdx = sampleOpponents(len(opponents), weight=opponentSamplingWeight)
+        opIdx = sampleOpponents(len(opponents), weight=opponentSamplingWeight) #sample random opponent 
         opponent.loadPolicy(opponents[opIdx])
         desc += f"VSing agent#{opIdx}/{len(opponents)-1}"
         
-        states, allowed, actions, numTurns, val, dist = playAgentGame(learner, opponent, boardSize, wMask, show=False)
+        states, allowed, actions, numTurns, val, dist = playAgentGame(learner, opponent, boardSize, wMask, show=False) # play a game vs it
+        
         #desc += f"{gray}{dist.probs.detach().numpy()[0]}{endc}"
         
         nt = len(actions)
         weights = [valueScale*val*discount**(nt-i-1) for i in range(nt)] # discounted weights for each state based on game outcome
-        learner.remember(states, allowed, actions, weights)
+        learner.remember(states, allowed, actions, weights) # remember the game/rewards
         
-        if game > 0 and game%trainEvery == 0:
+        if game > 0 and game%trainEvery == 0: # train periodically
             loss = learner.train()
             learner.forget()
         desc += f"{orange}, loss:{loss:.4f}"
@@ -140,7 +144,7 @@ def train(saveDir,
             score = 0
             opponent.loadPolicy(opponents[-1])
             for midx in (mrange:=trange(numTestGames, ncols=80, unit="games", ascii=" >=")):
-                numTurns, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames, seed=midx/numTestGames)
+                numTurns_, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames, seed=midx/numTestGames)
                 score += val_
                 matchWR = (score/(midx+1) + 1)/2
                 beatBest = matchWR >= wrThresh
@@ -151,36 +155,36 @@ def train(saveDir,
         if beatBest: desc += f"{green}, beat with wr={matchWR:.4f}"
         else: desc += f"{red}, lost with wr={matchWR:.4f}"
 
-        if game > 0 and game%examineEvery == 0: #if each model is a bit better than the last, we should see a trend of improving match scores as we vs earlier agents
+        if game > 0 and game%examineEvery == 0: # we pause training every so often to examine the learner's performance
             scores = [0 for i in range(len(opponents))]
-            for op in range(len(opponents)):
+            for op in range(len(opponents)): # if each model is a bit better than the last, we should see a trend of improving match scores as we vs earlier agents
                 opponent.loadPolicy(opponents[op])
                 for _ in range(numTestGames):
                     numTurns_, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames)
                     scores[op] += val_
-            playWithUser(learner, wMask)
-            plt.plot(scores)
+            playWithUser(learner, wMask) # play a game vs the user to test it out
+            plt.plot(scores) # plot scores vs all prev agents (we should see correlation)
             plt.show()
 
         wandb.log({"gameLength": numTurns, "loss":loss, "matchWR":matchWR, "numAgents":len(opponents), "score":val})
         t.set_description(desc + purple)
 
-save = "D:\\deepc4\\vpo"
+save = "D:\\wgmn\\deepc4\\vpo"
 
 
 if __name__ == "__main__":
     train(saveDir=save,
           numGames=1_000_000,
           opponentSamplingWeight=3,
-          trainEvery=25,
-          discount=0.8,
+          trainEvery=30,
+          discount=0.77,
           valueScale=10,
-          testEvery=300,
+          testEvery=360,
           numTestGames=130,
-          lr=0.0008,
+          lr=0.0009,
           wrThresh=0.56,
           boardSize=(6,7),
           examineEvery=25_000,
-          showTestGames=False,
+          showTestGames=True,
           cuda=False)
 

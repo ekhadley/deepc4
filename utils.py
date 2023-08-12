@@ -24,3 +24,9 @@ def sampleOpponents(numOpponents, weight=2):
     probs = [(i+1)**weight for i in range(numOpponents)]
     dist = torch.distributions.Categorical(torch.tensor(probs))
     return dist.sample().item()
+
+def rtg(val, numTurns, discount, valueScale, endScale=None):
+    endScale = 1 if endScale is None else endScale
+    weights = [valueScale*val*discount**(numTurns-i-1) for i in range(numTurns)]
+    weights[-1] *= endScale
+    return weights

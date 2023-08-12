@@ -23,7 +23,8 @@ def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardSize, wMask, recordE
     states, allowed, actions = [], [], []
     for turn in range(board.size+1):
         player = players[turn%2]
-        allowT, allow = legalMoves(board)
+        allow = legalMoves(board)
+        allowT = torch.tensor(allow)
         if torch.sum(allowT) == 0: val = 0; break
         state = player.observe(board)
         dist, action = player.chooseAction(state, allowT)
@@ -40,7 +41,7 @@ def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardSize, wMask, recordE
             hot = np.eye(player.numActions)[action]
             actions.append(hot)
         if val != 0: break
-    if recordExperience: return states, allowed, actions, turn, val, dist
+    if recordExperience: return states, allowed, actions, len(actions), val, dist
     return turn, val
 
 def playWithUser(agent, wMask, seed=None):
@@ -54,15 +55,15 @@ def playWithUser(agent, wMask, seed=None):
     board = newBoard(agent.boardSize)
     printBoard(board)
     for turn in range(board.size+1):
-        allowT, allow = legalMoves(board)
-        if torch.sum(allowT) == 0:
+        allow = legalMoves(board)
+        if np.sum(allow) == 0:
             val = 0
             printBoard(board)
             print(gray, "game drawn", endc)
             return val
         if (not userFirst) == turn%2:
             state = agent.observe(board)
-            dist, action = agent.chooseAction(state, allowT)
+            dist, action = agent.chooseAction(state, torch.tensor(allow))
             board = agent.drop(board, action)
             print(f"{gray}{dist.probs.detach().numpy()[0]}{endc}")
             val = value(board, wMask)
@@ -128,13 +129,9 @@ def train(saveDir,
         desc += f"VSing agent#{opIdx}/{len(opponents)-1}"
         
         states, allowed, actions, numTurns, val, dist = playAgentGame(learner, opponent, boardSize, wMask, show=False) # play a game vs it
-        
         #desc += f"{gray}{dist.probs.detach().numpy()[0]}{endc}"
-        
-        nt = len(actions)
-        weights = [valueScale*val*discount**(nt-i-1) for i in range(nt)] # discounted weights for each state based on game outcome
+        weights = rtg(val, numTurns, discount, valueScale, endScale=valueScale)
         learner.remember(states, allowed, actions, weights) # remember the game/rewards
-        
         if game > 0 and game%trainEvery == 0: # train periodically
             loss = learner.train()
             learner.forget()
@@ -144,8 +141,16 @@ def train(saveDir,
             score = 0
             opponent.loadPolicy(opponents[-1])
             for midx in (mrange:=trange(numTestGames, ncols=80, unit="games", ascii=" >=")):
-                numTurns_, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames, seed=midx/numTestGames)
-                score += val_
+                mstates, mallowed, mactions, mnumTurns, mval, mdist = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=True, show=showTestGames, seed=midx/numTestGames)
+                mweights = rtg(mval, mnumTurns, discount, valueScale, endScale=valueScale)
+                learner.remember(mstates, mallowed, mactions, mweights) # remember the game/rewards
+                if midx > 0 and midx%trainEvery == 0:
+                    mloss = learner.train()
+                    learner.forget()
+                    desc += f"{yellow}matchLoss:{mloss:.4f}"
+                    wandb.log({"matchLoss":mloss}, step=game*numTestGames+midx)
+
+                score += mval
                 matchWR = (score/(midx+1) + 1)/2
                 beatBest = matchWR >= wrThresh
                 mrange.set_description((green if beatBest else red) + f"{matchWR:.3f} vs #{len(opponents)-1}")
@@ -157,7 +162,7 @@ def train(saveDir,
 
         if game > 0 and game%examineEvery == 0: # we pause training every so often to examine the learner's performance
             scores = [0 for i in range(len(opponents))]
-            for op in range(len(opponents)): # if each model is a bit better than the last, we should see a trend of improving match scores as we vs earlier agents
+            for op in trange(len(opponents), desc=yellow): # if each model is a bit better than the last, we should see a trend of improving match scores as we vs earlier agents
                 opponent.loadPolicy(opponents[op])
                 for _ in range(numTestGames):
                     numTurns_, val_ = playAgentGame(learner, opponent, boardSize, wMask, recordExperience=False, show=showTestGames)
@@ -175,16 +180,16 @@ save = "D:\\wgmn\\deepc4\\vpo"
 if __name__ == "__main__":
     train(saveDir=save,
           numGames=1_000_000,
-          opponentSamplingWeight=3,
+          opponentSamplingWeight=2,
           trainEvery=30,
-          discount=0.77,
+          discount=0.8,
           valueScale=10,
-          testEvery=360,
+          testEvery=400,
           numTestGames=130,
-          lr=0.0009,
+          lr=0.01,
           wrThresh=0.56,
           boardSize=(6,7),
-          examineEvery=25_000,
-          showTestGames=True,
+          examineEvery=100_000,
+          showTestGames=False,
           cuda=False)
 

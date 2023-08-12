@@ -22,7 +22,7 @@ def drop(board, col, val):
 
 def legalMoves(board):
     al = 1*(board[0,:]==0)
-    return torch.tensor(al), al
+    return al
 
 def randomMove(board):
     moves = legalMoves(board, mask=False)
@@ -109,7 +109,9 @@ def winMask(shape, cnct=4):
     return masks
 
 def value(board, mask=None):
-    mask = winMask(board.shape) if mask is None else mask
+    if mask is None:
+        print(f"{bold}{yellow} WARNING: checking value of state without provided mask, so one must be made. This is very expensive!{endc}")
+        mask = winMask(board.shape)
     val1 = np.sum(board*mask, axis=(1,2)) > 3
     val2 = np.sum(board*mask, axis=(1,2)) < -3
     v1, v2 = np.sum(val1), np.sum(val2)

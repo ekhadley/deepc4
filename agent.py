@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.autograd.profiler as profiler
 import numpy as np
 import os, time, numpy as np
 from tqdm import trange
@@ -8,16 +9,16 @@ from utils import *
 
 
 class policy(nn.Module):
-    def __init__(self, boardShape, lr=.001, stationary=True, cuda=False, leaky=True):
+    def __init__(self, boardShape, lr=.001, stationary=True, cuda=False, leaky=True, wd=0.0003):
         super(policy, self).__init__()
         self.boardShape, self.lr = boardShape, lr
         self.leaky = leaky
         self.cuda_ = cuda
         h, w = boardShape
 
-        self.conv1 = nn.Conv2d(in_channels=2, out_channels=32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(in_channels=2, out_channels=64, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, padding=1)
         if leaky:
             self.act1 = nn.LeakyReLU()
             self.act2 = nn.LeakyReLU()
@@ -26,7 +27,7 @@ class policy(nn.Module):
             self.act1 = nn.ReLU()
             self.act2 = nn.ReLU()
             self.act3 = nn.ReLU()
-        self.lin1 = nn.Linear(64*h*w, 512)
+        self.lin1 = nn.Linear(32*h*w, 512)
         self.act4 = nn.ReLU()
         
         self.lin2 = nn.Linear(512, 256)
@@ -40,8 +41,8 @@ class policy(nn.Module):
         
         if self.cuda_: self.to("cuda")
 
-        #self.opt = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=.006, betas=(0.99, 0.99) if stationary else None)
-        self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.006)
+        #self.opt = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd, betas=(0.99, 0.99) if stationary else None)
+        self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=wd)
 
     def forward(self, X:torch.Tensor, allowed:torch.Tensor):
         if self.cuda_: X, allowed = X.to("cuda"), allowed.to("cuda")
@@ -86,22 +87,28 @@ class policy(nn.Module):
         self.load_state_dict(torch.load(path))
 
 class vpoAgent:
-    def __init__(self, boardSize, lr=.001, stationary=True, color=1, cuda=False):
+    def __init__(self, boardSize, lr=.001, stationary=True, color=1, cuda=False, wd=0.003, memSize=5000):
         self.boardSize, self.lr, self.color = boardSize, lr, color
         self.numActions = boardSize[1]
         self.cuda_ = cuda
+        self.wd = wd
         
-        self.policy = policy(boardSize, lr=lr, stationary=stationary, cuda=cuda)
+        self.policy = policy(boardSize, lr=lr, stationary=stationary, cuda=cuda, wd=self.wd)
         exst = torch.tensor(np.zeros(shape=(1, 2, *boardSize), dtype=np.float32))
         exal = torch.tensor(np.ones(shape=(self.numActions), dtype=np.float32))
+        print(red, bold, type(torchviz.make_dot(self.policy(exst, exal), params=dict(self.policy.named_parameters())))))
         self.policy.forward = torch.jit.trace(self.policy.forward, example_inputs=(exst, exal))
 
-        self.states, self.allowed, self.actions, self.weights = [], [], [], []
+        #self.states, self.allowed, self.actions, self.weights = [], [], [], []
+        self.memSize = memSize
+        self.recorded_steps = 0
+        self.wlogprobs = self.clearMem()
     
     def observe(self, board):
         a = np.where(board==self.color, 1, 0)
         b = np.where(board==-1*self.color, 1, 0)
-        obs = np.float32([a, b])
+        if self.cuda_: obs = torch.cuda.FloatTensor(np.float32([a, b]))
+        else: obs = torch.tensor(np.float32([a, b]))
         return obs
 
     def chooseAction(self, state, allowed):
@@ -109,29 +116,35 @@ class vpoAgent:
         if isinstance(state, np.ndarray): state = torch.tensor(state)
         if self.cuda_: state, allowed = state.to("cuda"), allowed.to("cuda")
         if state.ndim == 3: state = state.unsqueeze(0)
-        dist = self.policy(state, allowed)
-        dist = torch.distributions.Categorical(dist)
-        action = dist.sample()
+        dist = torch.flatten(self.policy(state, allowed))
+        action = torch.distributions.Categorical(dist).sample().detach().item()
         return dist, action
 
     def drop(self, board, col):
         return drop(board, col, self.color)
 
     def train(self):
-        states = torch.tensor(np.float32(self.states))
-        allowed = torch.tensor(np.float32(self.allowed))
-        actions = torch.tensor(np.float32(self.actions))
-        weights = torch.tensor(np.float32(self.weights))
-        return self.policy.train(states, allowed, actions, weights)
+        self.policy.zero_grad()
+        #print(bold, pink, self.recorded_steps, endc)
+        loss = -torch.mean(self.wlogprobs[:self.recorded_steps])
+        loss.backward(retain_graph=True)
+        self.policy.opt.step()
+        self.wlogprobs = self.clearMem()
+        self.policy.zero_grad()
+        return loss
 
-    def remember(self, states, allowed, actions, weights):
-        self.states += states
-        self.allowed += allowed
-        self.actions += actions
-        self.weights += weights
-    def forget(self):
-        self.states, self.allowed, self.actions, self.weights = [], [], [], []
+    def addEp(self, dists, actions, weights, numTurns):
+        if isinstance(weights, (list, np.ndarray)): weights = torch.tensor(weights)
+        if self.cuda_: weights = weights.to("cuda")
+        probs = torch.sum((dists*actions), axis=1)
+        logprobs = torch.log(probs)
+        wlogprobs = logprobs*weights
+        self.wlogprobs[self.recorded_steps:self.recorded_steps+numTurns] += wlogprobs
+        self.recorded_steps += numTurns
 
+    def clearMem(self):
+        self.recorded_steps = 0
+        return torch.zeros((self.memSize), dtype=torch.float32, device="cuda" if self.cuda_ else "cpu")
     def save(self, path, name):
         self.policy.save(path, name)
     def load(self, path):

@@ -2,7 +2,7 @@ import numpy as np
 import os, time, numpy as np
 import matplotlib.pyplot as plt
 from tqdm import trange
-from c4 import *
+from deepc4.c4_ import *
 np.set_printoptions(suppress=True, linewidth=200, precision=4)
 
 class node:

@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 import torchviz
 import torch.autograd.profiler as profiler
-import os, time, numpy as np
+import re, os, time, numpy as np
 from tqdm import trange
 
 
@@ -28,17 +28,19 @@ def sampleOpponents(numOpponents, weight=2):
     return dist.sample().item()
 
 def rtg(val, numTurns, discount, valueScale=1):
-    exps = torch.arange(numTurns, 0, -1, device=val.device)
+    device = val.device if torch.is_tensor(val) else "cpu"
+    exps = torch.arange(numTurns, 0, -1, device=device)
     discs = torch.pow(discount, exps)
     return val*discs*valueScale
 
 def loadAllModels(dir):
-    models = []
+    policies, valnets = [], []
     names = os.listdir(dir)
-    names.sort(key=lambda x:int(x.replace(".pth", "")) )
+    names = sorted([int(re.search("[0-9]+", nam).group()) for nam in names])
     for name in names:
-        models.append(torch.load(os.path.join(dir, name)))
-    return models
+        policies.append(torch.load(f"{dir}\\v{name}.pth"))
+        valnets.append(torch.load(f"{dir}\\p{name}.pth"))
+    return policies, valnets
 
 def printBoard_(board_):
     board = board_.squeeze()
@@ -61,6 +63,19 @@ def printBoard(board_):
     if boards.ndim == 3: return printBoard_(boards)
     return [printBoard_(b) for b in boards]
 
+def printValueAttr(values, memPositions, numSteps=-1):
+    cols = [purple, blue, cyan, lime, lemon, red, pink, orange, green, gray]
+    rep = ""
+    c = 0
+    for i, val in enumerate(values[:numSteps]):
+        for j, g in enumerate(memPositions):
+            if i in g: rep += cols[j]; break
+        rep += f" {val.item()}, "
+        c += 1
+        if c >= sum([1 for e in memPositions if e[-1] >= i]): rep += "\n"; c = 0
+        rep += endc
+    print(rep + endc)
+
 
 
 if __name__ == "__main__":
@@ -68,10 +83,7 @@ if __name__ == "__main__":
     numTurns = 10
     discount = 0.9
     valueScale = 1
-    weights = rtg(val, numTurns, discount, valueScale)
-    print(weights)
 
-    for i in trange(100_000):
-        exps = torch.arange(numTurns, -1, -1)
-        discs = val*discount**(exps)
-    print(discs)
+    for i in trange(1_000_000, ncols=100):
+        weights = rtg(val, numTurns, discount, valueScale)
+        i += 10

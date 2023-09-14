@@ -83,7 +83,15 @@ if __name__ == "__main__":
     numTurns = 10
     discount = 0.9
     valueScale = 1
+    #for i in trange(1_000_000, ncols=100):
+    weights = rtg(val, numTurns, discount, valueScale)
+    print(weights)
+    print()
 
-    for i in trange(1_000_000, ncols=100):
-        weights = rtg(val, numTurns, discount, valueScale)
-        i += 10
+    val = torch.tensor([0, 1, -1, 1, 1, -1, 1])
+    numTurns = torch.tensor([10, 5, 15, 23, 6, 4, 30])
+    discount = 0.9
+    valueScale = 1
+    #for i in trange(1_000_000, ncols=100):
+    weights = rtg(val, numTurns, discount, valueScale)
+    print(weights)

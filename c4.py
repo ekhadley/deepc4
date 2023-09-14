@@ -1,9 +1,7 @@
 import torch
 import numpy as np
-import os, time, numpy as np
 from tqdm import trange
 from utils import *
-
 
 def newBoard(shape, device="cpu"):
     if len(shape) == 2: b, h, w = 1, *shape
@@ -78,14 +76,11 @@ if __name__ == "__main__":
     #boards = drop(boards, actions, 0)
     #printBoard(boards)
 
-    b = newBoard((5,6,7))
-    b = drop(b, [0, 3, 6, 6, 1], 0)
-    b = drop(b, [6, 2, 1, 0, 3], 1)
-    #b = drop(b, 3, 0)
-    #b = drop(b, 3, 0)
-    #b = drop(b, 3, 0)
-    #b = drop(b, 0, 1)
-    #b = drop(b, 1, 1)
-    #b = drop(b, 2, 1)
+    b = newBoard((3,6,7))
+    b = drop(b, [0, 3, 6, ], 0)
+    b = drop(b, [6, 2, 1, ], 1)
+    f = torch.flip(b, dims=(1,))
     
     printBoard(b)
+    print(0)
+    printBoard(f)

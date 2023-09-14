@@ -2,47 +2,56 @@ import numpy as np
 import os, time, numpy as np
 import matplotlib.pyplot as plt
 from tqdm import trange
-from deepc4.c4_ import *
+from c4 import *
 np.set_printoptions(suppress=True, linewidth=200, precision=4)
 
 class node:
-    def __init__(self, board, mask, token, action):
-        # token is 1, -1, corresponding to the color of the move that created to this node
+    def __init__(self, parent, board, color, action):
+        # color is 1, -1, corresponding to the color of the move that created to this node
         # action is the column that was played to create this node
         self.board = board
-        self.token = token
+        self.parent = parent
+        self.color = color
         self.action = action
-        self.mask = mask
-        self.allowed = np.where(legalMoves(board))[0]
-        self.val = value(board, mask)
+        self.allowed = np.where(legalActions(board))[0]
+        self.val = value(board)
         self.children = []
         self.is_leaf = True
         self.is_terminal = self.val != 0
 
-    def addKid(self, kid):
-        self.children.append(kid)
-        self.is_leaf = False
-
     def findKids(self):
+        v = 0
         for i in self.allowed:
-            self.addKid(node(drop(self.board, i, -1*self.token), self.mask, -1*self.token, i))
+            newstate = drop(self.board, i, -1*self.color)
+            kid = node(self, newstate, -1*self.color, i)
+            self.children.append(kid)
+            v += abs(kid.val)
+            self.is_leaf = False
+        if v != 0:
+            self.value = self.color
+            self.children = [kid for kid in self.children if kid.val != 0]
+            self.updateParent()
+
+    def updateParent(self):
+        # if we are updating a non leaf node, it means one of that node's offspring ends in a win for somebody
+        
+        self.parent.val = self.color
+        self.parent.children = [self]
+        self.parent.updateParent()
 
 class searcher:
-    def __init__(self, boardShape, token, board=None):
+    def __init__(self, boardShape, color, board=None):
         self.current_state = newBoard(boardShape) if board is None else board
         self.boardShape = boardShape
         self.numActions = boardShape[1]
-        self.wMask = winMask(boardShape)
-        self.token = token
-        self.root = node(self.current_state, self.wMask, self.token, None)
+        self.color = color
+        self.root = node(None, self.current_state, self.color, None)
 
     def search(self, depth, currentDepth=0, root:node=None):
         root = self.root if root is None else root
         if currentDepth < depth and not root.is_terminal:
             if root.is_leaf:
                 root.findKids()
-                root.children = [nod for nod in root.children if nod.value*nod.token == 1]
-                    
             for nod in root.children:
                 self.search(depth, currentDepth=currentDepth+1, root=nod)
         return root
@@ -69,7 +78,7 @@ def playVsSearch(boardShape, depth, seed=None): # the move selection here makes 
     board = newBoard(boardShape)
     printBoard(board)
     for turn in range(board.size+1):
-        allow = legalMoves(board)
+        allow = legalActions(board)
         if np.sum(allow) == 0:
             val = 0
             printBoard(board)
@@ -83,7 +92,7 @@ def playVsSearch(boardShape, depth, seed=None): # the move selection here makes 
             ivern.observeMove(action)
             ivern.search(depth)
 
-            val = value(board, ivern.wMask)
+            val = value(board)
             if val != 0:
                 print(bold, red, "the agent wins!", endc)
                 printBoard(board)
@@ -104,7 +113,7 @@ def playVsSearch(boardShape, depth, seed=None): # the move selection here makes 
                     fails += 1
                     print(red, f"invalid input. receieved: {inp}(type:{type(inp)})", endc)
                     assert fails < 10, "too many invalid inputs, erroring out"
-            val = value(board, ivern.wMask)
+            val = value(board)
             if val != 0:
                 print(bold, green, "the user wins!", endc)
                 printBoard(board)
@@ -114,5 +123,5 @@ def playVsSearch(boardShape, depth, seed=None): # the move selection here makes 
         print()
     return 255
 
-
-playVsSearch((6, 7), 6)
+if __name__ == "__main__":
+    playVsSearch((6, 7), 6)

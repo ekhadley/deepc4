@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.autograd.profiler as profiler
-import wandb
 import numpy as np
 import os, time, numpy as np
-from tqdm import trange
-from c4 import *
+import matplotlib.pyplot as plt
+from c4 import drop, legalActions
 from utils import *
+
 
 class ValueNet(nn.Module):
     def __init__(self, boardShape, lr=.001, stationary=True, cuda=False, leaky=True, wd=0.0003, adam=False):
@@ -14,33 +13,33 @@ class ValueNet(nn.Module):
         self.boardShape, self.lr = boardShape, lr
         self.leaky = leaky
         self.cuda_ = cuda
-        self.bias = False
+        self.bias = True
         h, w = boardShape
 
-        self.conv1 = nn.Conv2d(in_channels=2, out_channels=64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, padding=1)
-        if leaky:
+        self.conv1 = nn.Conv2d(in_channels=2, out_channels=32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
+        self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1)
+
+        if self.leaky:
             self.act1 = nn.LeakyReLU()
             self.act2 = nn.LeakyReLU()
             self.act3 = nn.LeakyReLU()
+            self.act4 = nn.LeakyReLU()
         else:
-            self.act1 = nn.ReLU()
-            self.act2 = nn.ReLU()
-            self.act3 = nn.ReLU()
-
-        self.lin1 = nn.Linear(32*h*w, 256, bias=self.bias)
-        self.lin2 = nn.Linear(256, 64, bias=self.bias)
-        self.lin3 = nn.Linear(64, 1, bias=self.bias)
-        if 0:
-            self.act4 = nn.ReLU()
-            self.act5 = nn.ReLU()
-            self.act6 = nn.Tanh()
-        else:
+            self.act1 = nn.Tanh()
+            self.act2 = nn.Tanh()
+            self.act3 = nn.Tanh()
             self.act4 = nn.Tanh()
-            self.act5 = nn.Tanh()
-            self.act6 = nn.Tanh()
-        
+
+        self.lin1 = nn.Linear(256*h*w, 1024, bias=self.bias)
+        self.act5 = nn.ReLU()
+        self.lin2 = nn.Linear(1024, 512, bias=self.bias)
+        self.act6 = nn.ReLU()
+        self.lin3 = nn.Linear(512, 256, bias=self.bias)
+        self.act7 = nn.ReLU()
+        self.lin4 = nn.Linear(256, 1, bias=self.bias)
+
         if self.cuda_: self.to("cuda")
 
         if adam: self.opt = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd, betas=(0.99, 0.99) if stationary else None)
@@ -51,11 +50,12 @@ class ValueNet(nn.Module):
         X = self.act1(self.conv1(X))
         X = self.act2(self.conv2(X))
         X = self.act3(self.conv3(X))
+        X = self.act4(self.conv4(X))
         X = X.reshape(X.shape[0], -1)
-        X = self.act4(self.lin1(X))
-        X = self.act5(self.lin2(X))
-        #X = self.act6(self.lin3(X))
-        X = self.lin3(X)
+        X = self.act5(self.lin1(X))
+        X = self.act6(self.lin2(X))
+        X = self.act7(self.lin3(X))
+        X = self.lin4(X)
         return X.squeeze()
     def __call__(self, X:torch.Tensor): return self.forward(X)
 
@@ -63,10 +63,9 @@ class ValueNet(nn.Module):
         vals = self.forward(states)
         loss = F.mse_loss(vals, outcomes)
         acc = torch.mean((torch.sign(vals)==torch.sign(outcomes)).float()).item()
-        wandb.log({"pred_acc":acc})
         if debug:
             print(lime, f"\n\nacc={acc:.4f}")
-            print(blue, f"{vals=},{bold} [{green}{(torch.sum(1*(vals>0))/len(outcomes)).item():.3f},{red}{(torch.sum(1*(vals<0))/len(outcomes)).item():.3f}]", endc)
+            print(blue, f"{vals=},{bold} [{green}{(torch.sum(1*(vals>0))/len(outcomes)).item():.3f},{red}{(torch.sum(1*(vals<0))/len(outcomes)).item():.3f}]{gray}({len(outcomes)})", endc)
             print(purple, f"{outcomes=}", endc)
             print(cyan, f"value_loss={loss.item()}", endc)
         self.opt.zero_grad()
@@ -89,25 +88,31 @@ class PolicyNet(nn.Module):
         self.bias = False
         h, w = boardShape
 
-        self.conv1 = nn.Conv2d(in_channels=2, out_channels=64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, padding=1)
-        if leaky:
+        self.conv1 = nn.Conv2d(in_channels=2, out_channels=32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
+        self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1)
+        
+        if self.leaky:
             self.act1 = nn.LeakyReLU()
             self.act2 = nn.LeakyReLU()
             self.act3 = nn.LeakyReLU()
+            self.act4 = nn.LeakyReLU()
         else:
-            self.act1 = nn.ReLU()
-            self.act2 = nn.ReLU()
-            self.act3 = nn.ReLU()
-        self.lin1 = nn.Linear(32*h*w, 512, bias=self.bias)
-        self.act4 = nn.ReLU()
-        self.lin2 = nn.Linear(512, 256, bias=self.bias)
+            self.act1 = nn.Tanh()
+            self.act2 = nn.Tanh()
+            self.act3 = nn.Tanh()
+            self.act4 = nn.Tanh()
+
+        self.lin1 = nn.Linear(256*h*w, 1024, bias=self.bias)
         self.act5 = nn.ReLU()
-        self.lin3 = nn.Linear(256, 128, bias=self.bias)
+        self.lin2 = nn.Linear(1024, 512, bias=self.bias)
         self.act6 = nn.ReLU()
-        self.lin4 = nn.Linear(128, w, bias=self.bias)
-        self.act7 = nn.Softmax(dim=1)
+        self.lin3 = nn.Linear(512, 256, bias=self.bias)
+        self.act7 = nn.ReLU()
+        self.lin4 = nn.Linear(256, w, bias=self.bias)
+        self.act8 = nn.ReLU()
+        self.act9 = nn.Softmax(dim=1)
 
         if self.cuda_: self.to("cuda")
 
@@ -120,11 +125,13 @@ class PolicyNet(nn.Module):
         X = self.act1(self.conv1(X))
         X = self.act2(self.conv2(X))
         X = self.act3(self.conv3(X))
+        X = self.act4(self.conv4(X))
         X = X.reshape(X.shape[0], -1)
-        X = self.act4(self.lin1(X))
-        X = self.act5(self.lin2(X))
-        X = self.act6(self.lin3(X))
-        X = self.act7(self.lin4(X) + 1e16*(allowed-1))
+        X = self.act5(self.lin1(X))
+        X = self.act6(self.lin2(X))
+        X = self.act7(self.lin3(X))
+        X = self.act8(self.lin4(X))
+        X = self.act9(X + 1e16*(allowed-1))
         return X
     def __call__(self, X:torch.Tensor): return self.forward(X)
 
@@ -132,17 +139,27 @@ class PolicyNet(nn.Module):
         dists = self.forward(states)
         probs = torch.sum(dists*actions, dim=1)
         logprobs = torch.log(probs)
-        #wlogprobs = weights*logprobs # specifies goodness or badness from valnet
-        wlogprobs = torch.sign(weights)*logprobs # weights values as just good or bad
+        wlogprobs = weights*logprobs
         loss = -torch.mean(wlogprobs)
+
+        if 0: #################################################### debug
+            for i in range(len(dists)):
+                printBoard(states[i])
+                print(f"{red}{dists[i]=}")
+                print(f"{lemon}{actions[i]=}")
+                print(f"{blue}{weights[i]=}")
+            print(bold, underline, "======================================================", endc)
+
         if debug:
             print(green, f"{dists=}", endc)
             print(gray, f"H(probs)={torch.mean(-logprobs).item():.4f}" + endc)
-            #print(pink, f"{probs=}", endc)
-            print(blue, f"{logprobs=}", endc)
-            print(purple, f"{weights=}", endc)
+            print(pink, f"{logprobs=}", endc)
+            print(orange, f"{weights=}", endc)
             print(lemon, f"{wlogprobs=}", endc)
             print(cyan, f"policy_loss={loss.item()}", endc)
+            #plt.hist(weights.detach().numpy(), bins=100)
+            #plt.show()
+
         self.opt.zero_grad()
         loss.backward()
         self.opt.step()
@@ -155,7 +172,7 @@ class PolicyNet(nn.Module):
         self.load_state_dict(torch.load(path))
 
 class vpoAgent:
-    def __init__(self, boardShape, color, memSize=8000, vlr=0.001, plr=.001, stationary=True, cuda=False, wd=0.003, adam=False):
+    def __init__(self, boardShape, color, memSize=15000, vlr=0.001, plr=.001, stationary=True, cuda=False, wd=0.003, adam=False):
         self.boardShape, self.color = boardShape, color
         self.plr, self.vlr = plr, vlr
         self.numActions = boardShape[1]
@@ -175,21 +192,21 @@ class vpoAgent:
         if state.ndim == 3: state = state.unsqueeze(0)
         dist = self.policy(state)
         with torch.no_grad():
-            # hacky fix. how to sample any batch size forward output without recreating the categorical class?
+            # hacky fix. how to sample any batch size output without recreating the categorical class?
             try:
                 self.dist_.probs = dist
                 action = self.dist_.sample()
             except RuntimeError:
                 cat = torch.distributions.Categorical(dist)
                 action = cat.sample()
-
         return dist, action
 
     def drop(self, board, col):
         return drop(board, col, self.color)
     
     def observe(self, board):
-        if self.color: return torch.flip(board, dims=(0,))
+        assert board.ndim == 4
+        if self.color: return torch.flip(board, dims=(1,))
         return board
 
     def train(self):
@@ -197,10 +214,14 @@ class vpoAgent:
         actions = self.actions[:self.recorded_steps]
         outcomes = self.weights[:self.recorded_steps]
         weights, vloss, acc = self.valnet.train(states, outcomes)
-        ploss = self.policy.train(states, actions, weights)
-        #ploss = self.policy.train(states, actions, outcomes)
+
+        if 1:
+            ploss = self.policy.train(states, actions, weights) # uses the values from the valnet to weight
+        else:
+            ploss = self.policy.train(states, actions, outcomes) # uses the unweighted outcomes
+
         self.resetMem()
-        return vloss + ploss, acc
+        return vloss, ploss, acc
 
     def addGame(self, states, actions, outcome, numTurns):
         if self.recorded_steps + numTurns >= self.memSize:

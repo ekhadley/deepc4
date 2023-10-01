@@ -28,8 +28,7 @@ def sampleOpponents(numOpponents, weight=2):
     return dist.sample().item()
 
 def rtg(val, numTurns, discount, valueScale=1):
-    device = val.device if torch.is_tensor(val) else "cpu"
-    exps = torch.arange(numTurns, 0, -1, device=device)
+    exps = torch.arange(numTurns, 0, -1, device=val.device)
     discs = torch.pow(discount, exps)
     return val*discs*valueScale
 
@@ -42,41 +41,30 @@ def loadAllModels(dir):
         valnets.append(torch.load(f"{dir}\\p{name}.pth"))
     return policies, valnets
 
-def printBoard_(board_):
+def brepr(board_, colors=True):
     board = board_.squeeze()
     assert board.ndim == 3, f"got board shape {board.shape}, expected a 3d tensor of shape (2, H, W)"
     d, h, w = board.shape
-    str = gray
+    if colors: string = gray
+    else: string = ""
     for i in range(w):
-        str += f" {i} "
+        string += f" {i} "
     for y in range(h):
-        str += "\n"
+        string += "\n"
         for x in range(w):
-            if board[0][y][x] == 1: str += green + " O "
-            elif board[1][y][x] == 1: str += red + " X "
-            else: str += gray + " . "
-    str += endc
-    print(str)
+            if board[0][y][x] == 1: string += (green + " O ") if colors else " O "
+            elif board[1][y][x] == 1: string += (red + " X ") if colors else " X "
+            else: string += (gray if colors else "") + " . "
+    if colors: string += endc
+    return string
 
-def printBoard(board_):
+def printBoard_(board_, colors=True):
+    print(brepr(board_, colors=colors))
+
+def printBoard(board_, colors=True):
     boards = board_.squeeze()
-    if boards.ndim == 3: return printBoard_(boards)
-    return [printBoard_(b) for b in boards]
-
-def printValueAttr(values, memPositions, numSteps=-1):
-    cols = [purple, blue, cyan, lime, lemon, red, pink, orange, green, gray]
-    rep = ""
-    c = 0
-    for i, val in enumerate(values[:numSteps]):
-        for j, g in enumerate(memPositions):
-            if i in g: rep += cols[j]; break
-        rep += f" {val.item()}, "
-        c += 1
-        if c >= sum([1 for e in memPositions if e[-1] >= i]): rep += "\n"; c = 0
-        rep += endc
-    print(rep + endc)
-
-
+    if boards.ndim == 3: return printBoard_(boards, colors=colors)
+    return [printBoard_(b, colors=colors) for b in boards]
 
 if __name__ == "__main__":
     val = -1

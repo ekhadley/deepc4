@@ -10,17 +10,13 @@ import wandb
 np.set_printoptions(suppress=True, linewidth=200, precision=4)
 torch.set_printoptions(threshold=100, sci_mode=False, linewidth=1000, precision=4, edgeitems=4)
 
-def playWithUser(a, seed=None):
-    if isinstance(a, str):
-        agent = vpoAgent((6,7), lr=0.001, stationary=True, color=1, cuda=False)
-        agent.load(a)
-    else: agent = a
+def playWithUser(agent, seed=None, boardShape=(6,7)):
     boardsize = agent.boardShape[0]*agent.boardShape[1]
 
     r = np.random.uniform(0, 1) if seed is None else seed
     userFirst = (r >= 0.5)
 
-    board = newBoard(agent.boardShape)
+    board = newBoard((1, *boardShape), device=agent.device)
     printBoard(board)
     for turn in range(boardsize):
         allow = legalActions(board)
@@ -29,7 +25,7 @@ def playWithUser(a, seed=None):
             return 0
         if (not userFirst) == turn%2:
             dist, action = agent.chooseAction(agent.observe(board))
-            print(f"{lemon}\nturn {turn} {pink}{action=}, {lime}val={agent.valnet(board).detach().item():.5f}, {cyan}value={value(board).item()}\n {gray}probs:{dist.detach().numpy().flatten()}", endc)
+            print(f"{lemon}\nturn {turn} {pink}{action=}, {lime}val={agent.valnet(board).cpu().detach().item():.5f}, {cyan}value={value(board).item()}\n {gray}probs:{dist.cpu().detach().numpy().flatten()}", endc)
             board = agent.drop(board, action)
             val = value(board)
             if val != 0:
@@ -37,7 +33,7 @@ def playWithUser(a, seed=None):
                 printBoard(board)
                 return val
         else:
-            msg = f"{blue}enter move {np.where(allow.detach().numpy())}:\n{endc}"
+            msg = f"{blue}enter move {np.where(allow.detach().cpu().numpy())}:\n{endc}"
             validinp = False
             fails = 0
             while not validinp:
@@ -108,7 +104,7 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
 
     recorded_steps, numLiveGames = 0, numGames
     liveGames = torch.arange(0, numGames, device=learner.device, dtype=torch.int32)
-    memPositions = [[i] for i in range(numGames)]
+    memPositions = [[] for i in range(numGames)]
     states = torch.zeros((numGames*maxGameLen//2+1, 2, *boardShape), device=learner.device, requires_grad=False)
     actions = torch.zeros((numGames*maxGameLen//2+1, boardShape[1]), device=learner.device, requires_grad=False)
     values = torch.zeros((numGames*maxGameLen//2+1), device=learner.device, requires_grad=False)
@@ -117,7 +113,7 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
         learnersMove = not turn%2
         agent = learner if learnersMove else opponent
         dists, acts = agent.chooseAction(agent.observe(boards))
-        
+
         if learnersMove:
             states[recorded_steps:recorded_steps+numLiveGames] = boards
             actions[recorded_steps:recorded_steps+numLiveGames] = F.one_hot(acts, boardShape[1])
@@ -127,28 +123,48 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
         liveidx = torch.where(vals == 0)[0]
         
         if show:
-            print(f"{lemon}\nturn {turn}{orange}({'learner' if learnersMove else 'opponent'}), {pink}{acts=}, \n {gray}probs:{dists.detach().numpy()}", endc)
-            print(bold, orange, f"{vals=}, {red}{liveidx=}, {red}{liveGames=}, {cyan}{numLiveGames=}\n\n" + endc)
+            print(f"{lemon}\nturn {turn}{orange}({'learner' if learnersMove else 'opponent'}), {pink}actions{acts.cpu().detach().numpy()}, \n {gray}probs:{dists.cpu().detach().numpy()}", endc)
+            print(bold, orange, f"values={vals.cpu().detach().numpy()}, {red}liveidx={liveidx.cpu().detach().numpy()}, {red}liveGames={liveGames.cpu().detach().numpy()}, {cyan}{numLiveGames=}\n\n" + endc)
             printBoard(boards)
         
         for i, val in enumerate(vals):
             gameid = liveGames[i]
             if learnersMove:
-                memPositions[gameid].append(recorded_steps + i)
-                #try: values[recorded_steps + i] += 1 if acts[i]%2 else -1
-                #except IndexError: pass
+                iii = recorded_steps + i
+                memPositions[gameid].append(iii)
+                
+                aaa = acts.item() if acts.ndim == 0 else acts[i].item()
+                #values[iii] += 1*torch.sum(states[iii,:,:,0])
+                #values[iii] += 1*torch.sum(states[iii,:,:,6])
+                #values[iii] += 1 if aaa == 5 else 0
+                #values[iii] += 1 if aaa%2 else -1
+
+                values[iii] += 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
+                
+                if 0:
+                    if len(memPositions[gameid])%2:
+                        values[iii] += 1 if aaa==6 else -1
+                    else:
+                        values[iii] += 1 if aaa==0 else -1
+                #print(pink, bold, acts[i].cpu().detach().item(), len(memPositions[gameid]), values[iii].cpu().detach().item())
+
             if val != 0:
-                #values[memPositions[gameid]] += 0
-                values[memPositions[gameid]] += val/len(memPositions[gameid])
-                #values[memPositions[gameid]] += rtg(val, len(memPositions[gameid]), 0.8, 10)/len(memPositions[gameid])
+                values[memPositions[gameid]] += 0
+                #values[memPositions[gameid]] += val
+                #values[memPositions[gameid]] += val/len(memPositions[gameid])
+                #values[memPositions[gameid]] += rtg(val, len(memPositions[gameid]), 0.7, 100)/len(memPositions[gameid])
         
         if learnersMove: recorded_steps += numLiveGames
         liveGames = liveGames[liveidx]
         numLiveGames = liveGames.shape[0]
         
-        #printValueAttr(values, memPositions, recorded_steps)
         boards = boards[liveidx]
         if numLiveGames == 0: break
+
+    #[print(e) for e in memPositions]
+    #[print(values[e]) for e in memPositions]
+    #time.sleep(3)
+    print("\n", bold, underline, torch.mean(values[:recorded_steps]).cpu().detach().item(), endc)
     return states[:recorded_steps], actions[:recorded_steps], values[:recorded_steps], recorded_steps
 
 def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_001,opponentSamplingWeight=2,showTestGames=False,valueScale=1,discount=0.8,examineEvery=1_000_000,matchSize=100,testEvery=10,testMatchSize=300,wrThresh=0.566,plr=0.1,vlr=1.0,weightDecay=0.0001,adam=False,cuda=False):
@@ -157,11 +173,12 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
 
     if loadDir is None:
         r = vpoAgent(boardShape, 1, cuda=cuda)
-        if saveDir is not None: r.save(saveDir, "0") # save a random policy to be the first opponent
-        learner = vpoAgent(boardShape, 0, vlr=vlr, plr=plr, cuda=cuda, wd=weightDecay, adam=adam) # initialize the first agent to be trained
-        opponent = vpoAgent(boardShape, 1, cuda=cuda) # initialize the first opponent to be trained against
-        opponents = [r.policyStateDict()] # we keep the previous best models' state_dicts here
-    elif isinstance(loadDir, str):
+        if saveDir is not None: r.save(saveDir, "0")
+        learner = vpoAgent(boardShape, 0, vlr=vlr, plr=plr, cuda=cuda, wd=weightDecay, adam=adam)
+        opponent = vpoAgent(boardShape, 1, cuda=cuda)
+        opponents = [r.policyStateDict()]
+    else:
+        assert isinstance(loadDir, str), "loadDir must be a string"
         opponent = vpoAgent(boardShape, 1)
         policies, valnets = loadAllModels(loadDir)
         opponents = policies[0:-rollback-1]
@@ -169,8 +186,8 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
         learner.loadPolicy(opponents[-1])
         learner.loadValnet(valnets[-rollback-1])
 
-    config = {"policyModelShape": learner.policy, "valueNetModelShape": learner.valnet, "numGames":numGames, "opponentSamplingWeight":opponentSamplingWeight, "matchSize":matchSize, "discount":discount, "testEvery":testEvery, "policyLR":plr,"valueLR":vlr, "numTestGames":testMatchSize, "wrThresh":wrThresh, "boardShape":boardShape, "showTestGames":showTestGames, "optimizer":learner.policy.opt.state_dict(), "leaky_acts":learner.policy.leaky, "valueScale":valueScale}
-    wandb.init(project="vpoc4", config=config, dir="D:\\wgmn\\")
+    config = {"policyModelShape": learner.policy, "valueNetModelShape": learner.valnet, "numGames":numGames, "opponentSamplingWeight":opponentSamplingWeight, "matchSize":matchSize, "discount":discount, "testEvery":testEvery, "policyLR":plr,"valueLR":vlr, "numTestGames":testMatchSize, "wrThresh":wrThresh, "boardShape":boardShape, "showTestGames":showTestGames, "optimizer":learner.policy.opt.state_dict(), "valueScale":valueScale}
+    wandb.init(project="vpoc4", config=config, dir="E:\\wgmn\\")
     wandb.watch((learner.policy, learner.valnet), log="all", log_freq=10)
 
     beatBest, matchWR, lastwinWR = False, 0, 0
@@ -178,20 +195,19 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
         desc = blue + bold
         
         opIdx = sampleOpponents(len(opponents), weight=opponentSamplingWeight) #sample random opponent 
-        opponent.loadPolicy(opponents[opIdx])
+        opponent.loadPolicy(opponents[int(opIdx)])
         desc += f"VSing agent#{opIdx}/{len(opponents)-1}"
         
-        #states, actions, numTurns, val = playAgentGame(learner, opponent, boardShape) # play a game vs it
-        states, actions, val, numTurns = playAgentMatch(learner, opponent, boardShape, matchSize) # play a game vs it
-        learner.addGame(states, actions, val, numTurns) # remember the game/rewards
+        states, actions, val, numTurns = playAgentMatch(learner, opponent, boardShape, matchSize, show=False)
+        learner.addGame(states, actions, val, numTurns)
 
         vloss, ploss, pred_acc = learner.train()
-        desc += f"{orange}, vloss:{ploss:.4f}, ploss:{ploss:.4f}"
+        desc += f"{orange}, vloss:{vloss:.4f}, ploss:{ploss:.4f}"
 
-        if match > 0 and match%testEvery == 0: # play test match to see if learner has surpassed prev best policy
+        if match > 0 and match%testEvery == 0:
             opponent.loadPolicy(opponents[-1])
-            m_states, m_actions, m_vals, m_numTurns = playAgentMatch(learner, opponent, boardShape, testMatchSize, show=showTestGames) # play a game vs it
-            learner.addGame(m_states, m_actions, m_vals, m_numTurns) # remember the game/rewards
+            m_states, m_actions, m_vals, m_numTurns = playAgentMatch(learner, opponent, boardShape, testMatchSize, show=showTestGames)
+            learner.addGame(m_states, m_actions, m_vals, m_numTurns)
             learner.train()
             matchWR = (torch.sum(torch.sign(m_vals[:testMatchSize])).item()/(testMatchSize) + 1)/2
             beatBest = matchWR >= wrThresh
@@ -202,43 +218,43 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
         if beatBest: desc += f"{green}, beat with wr={matchWR:.4f}, {lime}last win was with wr={lastwinWR:.4f}"
         else: desc += f"{red}, lost with wr={matchWR:.4f}, {lime}last win was with wr={lastwinWR:.4f}"
 
-        if match > 0 and match%examineEvery == 0: # we pause training every so often to examine the learner's performance
+        if match > 0 and match%examineEvery == 0:
             scores = [0]*len(opponents)
-            for op in trange(len(opponents), desc=lemon, ncols=80, unit="ops", ascii=" >="): # if each model is a bit better than the last, we should see a trend of improving match scores as we vs earlier agents
+            for op in trange(len(opponents), desc=lemon, ncols=80, unit="ops", ascii=" >="):
                 opponent.loadPolicy(opponents[op])
                 __, __, valll, __ = playAgentMatch(learner, opponent, boardShape, matchSize)
                 scores[op] += torch.sum(valll).item()
-            playWithUser(learner) # play a game vs the user to test it out
-            plt.plot(scores) # plot scores vs all prev agents (we should see correlation)
+            playWithUser(learner)
+            plt.plot(scores)
             plt.show()
 
         wandb.log({"gameLength": numTurns/matchSize, "pred_acc":pred_acc, "vloss":vloss, "ploss":ploss, "matchWR":matchWR, "numAgents":len(opponents), "score":torch.sum(val).item(), "pred_acc":pred_acc}, step=match*matchSize)
         t.set_description(desc + purple)
 
-save = "D:\\wgmn\\deepc4\\ac"
+save = "E:\\wgmn\\deepc4\\ac"
 
 #import cProfile
 #prof = cProfile.Profile()
 #prof.enable()
 
 if __name__ == "__main__":
-    train(saveDir=save,
+    train(saveDir=None,
           loadDir=None,
           rollback=0,
           boardShape=(6,7),
-          numGames=1_000_000_000,
-          opponentSamplingWeight=2,
+          numGames=500_000_000,
+          opponentSamplingWeight=3,
           showTestGames=False,
           valueScale=1,
           discount=0.8,
-          examineEvery=20_000,
+          examineEvery=5000000000,
           matchSize=100,
-          testEvery=30,
           testMatchSize=300,
-          wrThresh=0.566,
+          testEvery=30,
+          wrThresh=0.570,
           plr=0.2,
-          vlr=0.5,
-          weightDecay=0.003,
+          vlr=0.05,
+          weightDecay=0.001,
           adam=False,
           cuda=True)
 

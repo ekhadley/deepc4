@@ -6,13 +6,11 @@ from utils import *
 def newBoard(shape, device="cpu"):
     if len(shape) == 2: b, h, w = 1, *shape
     elif len(shape) == 3: b, h, w = shape
+    else: assert 0, "invalid board shape"
     return torch.zeros((b, 2, h, w), dtype=torch.float32, device=torch.device(device), requires_grad=False)
 
-def legalActions(boards_:torch.tensor):
-    boards = boards_.clone()
-    if boards.dim() == 3: boards = boards_.unsqueeze(0)
-    boards = torch.sum(boards,axis=1)
-    return 1*(boards[:,0,:]==0).squeeze()
+def legalActions(boards:torch.Tensor):
+    return torch.abs(1-torch.sum((boards.unsqueeze(0) if boards.ndim==3 else boards)[:,:,0], dim=1)).squeeze()
 
 def getmask(cnct, device="cpu"):
     mask = np.zeros((cnct*2 + 2, 1, cnct, cnct))
@@ -46,6 +44,7 @@ class valuator:
             return v1 - v2
 value = valuator()#singleton class for determining winning states. We do this so we can use the same mask for all boards instead of passing it around during training
 
+
 def buildBoard(actions, boardShape=(6, 7)):
     assert len(actions) == boardShape[1]
     b = newBoard(boardShape)
@@ -54,33 +53,22 @@ def buildBoard(actions, boardShape=(6, 7)):
             b = drop(b, col, a)
     return b
 
-def drop(boards_:torch.tensor, columns:torch.tensor, color:int):
-    boards = boards_.clone()
+@torch.no_grad()
+def drop(boards:torch.Tensor, columns:torch.Tensor, color:int):
+    newboards = (boards.unsqueeze(0) if boards.ndim==3 else boards).clone()
     batchsize, _, height, width = boards.shape
-    iii = height - torch.sum(boards, axis=(1,2), dtype=torch.int32).squeeze(axis=1) - 1
+    iii = height - torch.sum(newboards, dim=(1,2), dtype=torch.int32).squeeze(dim=1) - 1
     bidxs = torch.arange(batchsize)
-    boards[bidxs,color,iii[bidxs,columns],columns] = 1
-    return boards
+    newboards[bidxs,color,iii[bidxs,columns],columns] = 1
+    return newboards
 
 if __name__ == "__main__":
-    #boards = newBoard((3,6,7))
-    #actions = [2,6,6]
-    #boards = drop(boards, actions, 1)
-    #boards = drop(boards, actions, 1)
-    #boards = drop(boards, actions, 1)
-    #actions = [5,1,2]
-    #boards = drop(boards, actions, 0)
-    #actions = [0,4,6]
-    #boards = drop(boards, actions, 1)
-    #actions = [4,6,0]
-    #boards = drop(boards, actions, 0)
-    #printBoard(boards)
 
-    b = newBoard((3,6,7))
-    b = drop(b, [0, 3, 6, ], 0)
-    b = drop(b, [6, 2, 1, ], 1)
-    f = torch.flip(b, dims=(1,))
-    
-    printBoard(b)
-    print(0)
-    printBoard(f)
+    b = newBoard((100,6,7))
+    acts = torch.tensor(np.random.randint(0, 6, size=(100)))
+    print(acts)
+
+
+    for i in trange(1_000_000, ncols=120):
+        b = drop(b, acts, 0)
+

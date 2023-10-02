@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import re, os, time, numpy as np
 import matplotlib.pyplot as plt
 from tqdm import trange
+
 from c4 import *
-from agent import vpoAgent
+from deepc4.nets import vpoAgent
 import wandb
 np.set_printoptions(suppress=True, linewidth=200, precision=4)
 torch.set_printoptions(threshold=100, sci_mode=False, linewidth=1000, precision=4, edgeitems=4)
@@ -139,9 +139,9 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
                 #values[iii] += 1 if aaa == 5 else 0
                 #values[iii] += 1 if aaa%2 else -1
 
-                values[iii] += 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
+                #values[iii] += 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
                 
-                if 0:
+                if 1:
                     if len(memPositions[gameid])%2:
                         values[iii] += 1 if aaa==6 else -1
                     else:
@@ -252,7 +252,7 @@ if __name__ == "__main__":
           testMatchSize=300,
           testEvery=30,
           wrThresh=0.570,
-          plr=0.2,
+          plr=0.02,
           vlr=0.05,
           weightDecay=0.001,
           adam=False,

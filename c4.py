@@ -69,6 +69,7 @@ if __name__ == "__main__":
     print(acts)
 
 
+    b.to("cuda")
     for i in trange(1_000_000, ncols=120):
         b = drop(b, acts, 0)
 

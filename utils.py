@@ -1,9 +1,11 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import torchviz
 import torch.autograd.profiler as profiler
 import re, os, time, numpy as np
+import matplotlib.pyplot as plt
 from tqdm import trange
 
 

@@ -1,11 +1,5 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import os, time, numpy as np
-import matplotlib.pyplot as plt
-from c4 import drop, legalActions
 from utils import *
+from c4 import drop
 from nets import PolicyNet, ValueNet
 
 class vpoAgent:
@@ -28,7 +22,7 @@ class vpoAgent:
     @torch.no_grad()
     def chooseAction(self, state:torch.Tensor):
         if state.ndim == 3: state = state.unsqueeze(0)
-        dist = torch.log(self.policy(state))
+        dist = self.policy(state)
         try:
             self.dist_.probs = dist
             action = self.dist_.sample()
@@ -40,35 +34,33 @@ class vpoAgent:
     def drop(self, board, col):
         return drop(board, col, self.color)
     
+    @torch.no_grad()
     def observe(self, board):
         assert board.ndim == 4
         if self.color: return torch.flip(board, dims=(1,))
         return board
+    
     def train(self):
         states = self.states[:self.recorded_steps]
         actions = self.actions[:self.recorded_steps]
         outcomes = self.weights[:self.recorded_steps]
         weights = self.valnet(states).detach()
-        _, vloss, acc = self.valnet.train_(states, outcomes)
-        ploss = self.policy.train_(states, actions, outcomes) # uses the unweighted outcomes
-        #ploss = self.policy.train_(states, actions, weights) # uses the values from the valnet to weight
-        #ploss = self.policy.train_(states, actions, outcomes-weights) # uses the advantage 
+        _, vloss, acc = self.valnet.train_valnet(states, outcomes)
+        ploss = self.policy.train_policy(states, actions, outcomes) # uses the unweighted outcomes
+        #ploss = self.policy.train_policy(states, actions, weights) # uses the values from the valnet to weight
+        #ploss = self.policy.train_policy(states, actions, outcomes-weights) # uses the advantage 
         self.resetMem()
         return vloss, ploss, acc
 
     @torch.no_grad()
     def addGame(self, states, actions, outcome, numTurns):
-        if self.recorded_steps + numTurns >= self.memSize:
-            assert 0
-            self.states = torch.cat((self.states, torch.zeros((self.memSize, 2, *self.boardShape), dtype=torch.float32, device=self.device)))
-            self.memSize *= 2
-        self.states[self.recorded_steps:self.recorded_steps+numTurns] += states
-        self.actions[self.recorded_steps:self.recorded_steps+numTurns] += actions
-        self.weights[self.recorded_steps:self.recorded_steps+numTurns] += outcome
+        self.states[self.recorded_steps:self.recorded_steps+numTurns] = states
+        self.actions[self.recorded_steps:self.recorded_steps+numTurns] = actions
+        self.weights[self.recorded_steps:self.recorded_steps+numTurns] = outcome
         self.recorded_steps += numTurns
 
     def resetMem(self):
-        self.states, self.actions , self.weights, self.recorded_steps = self.getBlankMem()
+        self.states, self.actions, self.weights, self.recorded_steps = self.getBlankMem()
     def getBlankMem(self):
         yield torch.zeros((self.memSize, 2, *self.boardShape), dtype=torch.float32, device=self.device)
         yield torch.zeros((self.memSize, self.numActions), dtype=torch.float32, device=self.device)

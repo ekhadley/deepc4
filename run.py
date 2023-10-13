@@ -1,14 +1,9 @@
-import torch
-import torch.nn as nn
-import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import trange
-
-from c4 import *
-from deepc4.nets import vpoAgent
 import wandb
+from c4 import *
+from agent import vpoAgent
+
 np.set_printoptions(suppress=True, linewidth=200, precision=4)
-torch.set_printoptions(threshold=100, sci_mode=False, linewidth=1000, precision=4, edgeitems=4)
+torch.set_printoptions(threshold=1000, sci_mode=False, linewidth=1000, precision=4, edgeitems=4)
 
 def playWithUser(agent, seed=None, boardShape=(6,7)):
     boardsize = agent.boardShape[0]*agent.boardShape[1]
@@ -92,7 +87,11 @@ def playAgentGame(learner:vpoAgent, opponent:vpoAgent, boardShape, learnerFirst=
     if recordExperience: return states[:lturn], actions[:lturn], val, lturn
     return lturn, val
 
+@torch.no_grad()
 def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, show=False):
+    
+    points.append(0)
+    
     maxGameLen = boardShape[0]*boardShape[1]
     learnerFirstBoards = newBoard((numGames//2, *boardShape), device=learner.device)
 
@@ -112,16 +111,21 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
     for turn in range(maxGameLen-1):
         learnersMove = not turn%2
         agent = learner if learnersMove else opponent
+
         dists, acts = agent.chooseAction(agent.observe(boards))
+        #boards_ = torch.cat([1+0*newBoard((1, *boardShape)) if len(memPositions[g])%2 else 0*newBoard((1, *boardShape))-1 for g in range(numLiveGames)]).to(learner.device)
+        #dists, acts = agent.chooseAction(agent.observe(boards_))
 
         if learnersMove:
             states[recorded_steps:recorded_steps+numLiveGames] = boards
+            #states[recorded_steps:recorded_steps+numLiveGames] = boards_
             actions[recorded_steps:recorded_steps+numLiveGames] = F.one_hot(acts, boardShape[1])
+
         boards = agent.drop(boards, acts)
 
         vals = value(boards)
         liveidx = torch.where(vals == 0)[0]
-        
+
         if show:
             print(f"{lemon}\nturn {turn}{orange}({'learner' if learnersMove else 'opponent'}), {pink}actions{acts.cpu().detach().numpy()}, \n {gray}probs:{dists.cpu().detach().numpy()}", endc)
             print(bold, orange, f"values={vals.cpu().detach().numpy()}, {red}liveidx={liveidx.cpu().detach().numpy()}, {red}liveGames={liveGames.cpu().detach().numpy()}, {cyan}{numLiveGames=}\n\n" + endc)
@@ -134,18 +138,18 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
                 memPositions[gameid].append(iii)
                 
                 aaa = acts.item() if acts.ndim == 0 else acts[i].item()
-                #values[iii] += 1*torch.sum(states[iii,:,:,0])
-                #values[iii] += 1*torch.sum(states[iii,:,:,6])
-                #values[iii] += 1 if aaa == 5 else 0
-                #values[iii] += 1 if aaa%2 else -1
+                #r = 1*torch.sum(states[iii,:,:,0])
+                #r = 1*torch.sum(states[iii,:,:,6])
+                #r = 1 if aaa == 5 else 0
+                #r = 1 if aaa%2 else -1
 
-                #values[iii] += 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
+                r = 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
+                #r = 1 if aaa==len(memPositions[gameid])%7 else -1
                 
-                if 1:
-                    if len(memPositions[gameid])%2:
-                        values[iii] += 1 if aaa==6 else -1
-                    else:
-                        values[iii] += 1 if aaa==0 else -1
+                #r = 1 if aaa==(6 if len(memPositions[gameid])%2 else 0) else -1
+                
+                values[iii] += r
+                points[-1] += r
                 #print(pink, bold, acts[i].cpu().detach().item(), len(memPositions[gameid]), values[iii].cpu().detach().item())
 
             if val != 0:
@@ -161,10 +165,14 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
         boards = boards[liveidx]
         if numLiveGames == 0: break
 
+    #print()
     #[print(e) for e in memPositions]
     #[print(values[e]) for e in memPositions]
+    #print("\n", bold, underline, torch.mean(values[:recorded_steps]).cpu().detach().item(), endc)
     #time.sleep(3)
-    print("\n", bold, underline, torch.mean(values[:recorded_steps]).cpu().detach().item(), endc)
+
+    points[-1] /= numGames
+
     return states[:recorded_steps], actions[:recorded_steps], values[:recorded_steps], recorded_steps
 
 def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_001,opponentSamplingWeight=2,showTestGames=False,valueScale=1,discount=0.8,examineEvery=1_000_000,matchSize=100,testEvery=10,testMatchSize=300,wrThresh=0.566,plr=0.1,vlr=1.0,weightDecay=0.0001,adam=False,cuda=False):
@@ -185,7 +193,11 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
         learner = vpoAgent(boardShape, 0, plr=plr, vlr=vlr, cuda=cuda, wd=weightDecay, adam=adam)
         learner.loadPolicy(opponents[-1])
         learner.loadValnet(valnets[-rollback-1])
-
+    
+    model_parameters = filter(lambda p: p.requires_grad, learner.policy.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print(bold, underline, pink, params, endc)
+    
     config = {"policyModelShape": learner.policy, "valueNetModelShape": learner.valnet, "numGames":numGames, "opponentSamplingWeight":opponentSamplingWeight, "matchSize":matchSize, "discount":discount, "testEvery":testEvery, "policyLR":plr,"valueLR":vlr, "numTestGames":testMatchSize, "wrThresh":wrThresh, "boardShape":boardShape, "showTestGames":showTestGames, "optimizer":learner.policy.opt.state_dict(), "valueScale":valueScale}
     wandb.init(project="vpoc4", config=config, dir="E:\\wgmn\\")
     wandb.watch((learner.policy, learner.valnet), log="all", log_freq=10)
@@ -211,10 +223,14 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
             learner.train()
             matchWR = (torch.sum(torch.sign(m_vals[:testMatchSize])).item()/(testMatchSize) + 1)/2
             beatBest = matchWR >= wrThresh
-            if beatBest:
+            #if beatBest:
+            if False: ##########################################################################
                 opponents.append(learner.policyStateDict())
                 lastwinWR = matchWR
                 if saveDir is not None: learner.save(saveDir, f"{match}")
+            plt.plot(points)
+            plt.show()
+
         if beatBest: desc += f"{green}, beat with wr={matchWR:.4f}, {lime}last win was with wr={lastwinWR:.4f}"
         else: desc += f"{red}, lost with wr={matchWR:.4f}, {lime}last win was with wr={lastwinWR:.4f}"
 
@@ -224,9 +240,11 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
                 opponent.loadPolicy(opponents[op])
                 __, __, valll, __ = playAgentMatch(learner, opponent, boardShape, matchSize)
                 scores[op] += torch.sum(valll).item()
+            
             playWithUser(learner)
             plt.plot(scores)
             plt.show()
+            enumerate()
 
         wandb.log({"gameLength": numTurns/matchSize, "pred_acc":pred_acc, "vloss":vloss, "ploss":ploss, "matchWR":matchWR, "numAgents":len(opponents), "score":torch.sum(val).item(), "pred_acc":pred_acc}, step=match*matchSize)
         t.set_description(desc + purple)
@@ -238,23 +256,24 @@ save = "E:\\wgmn\\deepc4\\ac"
 #prof.enable()
 
 if __name__ == "__main__":
+    points = []
     train(saveDir=None,
           loadDir=None,
           rollback=0,
           boardShape=(6,7),
-          numGames=500_000_000,
+          numGames=20000000000,
           opponentSamplingWeight=3,
           showTestGames=False,
           valueScale=1,
           discount=0.8,
           examineEvery=5000000000,
-          matchSize=100,
-          testMatchSize=300,
-          testEvery=30,
+          matchSize=1,
+          testMatchSize=1,
+          testEvery=3000,
           wrThresh=0.570,
-          plr=0.02,
-          vlr=0.05,
-          weightDecay=0.001,
+          plr=0.005,
+          vlr=0.005,
+          weightDecay=0.0003,
           adam=False,
           cuda=True)
 

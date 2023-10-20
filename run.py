@@ -3,7 +3,7 @@ from c4 import *
 from agent import vpoAgent
 
 np.set_printoptions(suppress=True, linewidth=200, precision=4)
-torch.set_printoptions(threshold=1000, sci_mode=False, linewidth=1000, precision=4, edgeitems=4)
+torch.set_printoptions(threshold=100, sci_mode=False, linewidth=1000, precision=4, edgeitems=4)
 
 def playWithUser(agent, seed=None, boardShape=(6,7)):
     boardsize = agent.boardShape[0]*agent.boardShape[1]
@@ -108,13 +108,20 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
     actions = torch.zeros((numGames*maxGameLen//2+1, boardShape[1]), device=learner.device, requires_grad=False)
     values = torch.zeros((numGames*maxGameLen//2+1), device=learner.device, requires_grad=False)
 
-    for turn in range(maxGameLen-1):
+    for turn in range(maxGameLen+1):
         learnersMove = not turn%2
         agent = learner if learnersMove else opponent
 
         dists, acts = agent.chooseAction(agent.observe(boards))
-        #boards_ = torch.cat([1+0*newBoard((1, *boardShape)) if len(memPositions[g])%2 else 0*newBoard((1, *boardShape))-1 for g in range(numLiveGames)]).to(learner.device)
-        #dists, acts = agent.chooseAction(agent.observe(boards_))
+        if False:
+            bbb = []
+            for gameid in liveGames:
+                ggg = torch.zeros((1, 2, *boardShape))
+                ggg[:,:,:,len(memPositions[gameid])%7] += 1
+                bbb.append(ggg)
+            boards_ = torch.cat(bbb, dim=0).to(learner.device)
+            #printBoard(boards_)
+            dists, acts = agent.chooseAction(agent.observe(boards_))
 
         if learnersMove:
             states[recorded_steps:recorded_steps+numLiveGames] = boards
@@ -127,8 +134,8 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
         liveidx = torch.where(vals == 0)[0]
 
         if show:
-            print(f"{lemon}\nturn {turn}{orange}({'learner' if learnersMove else 'opponent'}), {pink}actions{acts.cpu().detach().numpy()}, \n {gray}probs:{dists.cpu().detach().numpy()}", endc)
-            print(bold, orange, f"values={vals.cpu().detach().numpy()}, {red}liveidx={liveidx.cpu().detach().numpy()}, {red}liveGames={liveGames.cpu().detach().numpy()}, {cyan}{numLiveGames=}\n\n" + endc)
+            print(f"{lemon}\nturn {turn}{orange}({'learner' if learnersMove else 'opponent'}), {pink}actions{fromt(acts)}, \n {gray}probs:{fromt(dists)}", endc)
+            print(bold, orange, f"values={fromt(vals)}, {red}liveidx={fromt(liveidx)}, {red}liveGames={fromt(liveGames)}, {cyan}{numLiveGames=}\n\n" + endc)
             printBoard(boards)
         
         for i, val in enumerate(vals):
@@ -140,11 +147,13 @@ def playAgentMatch(learner:vpoAgent, opponent:vpoAgent, boardShape, numGames, sh
                 aaa = acts.item() if acts.ndim == 0 else acts[i].item()
                 #r = 1*torch.sum(states[iii,:,:,0])
                 #r = 1*torch.sum(states[iii,:,:,6])
+                
                 #r = 1 if aaa == 5 else 0
                 #r = 1 if aaa%2 else -1
 
-                r = 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
-                #r = 1 if aaa==len(memPositions[gameid])%7 else -1
+                #r = 1 if torch.sum(states[iii,:,:,aaa])%2 else -1
+                
+                r = 1 if aaa==len(memPositions[gameid])%7 else -1
                 
                 #r = 1 if aaa==(6 if len(memPositions[gameid])%2 else 0) else -1
                 
@@ -194,10 +203,6 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
         learner.loadPolicy(opponents[-1])
         learner.loadValnet(valnets[-rollback-1])
     
-    model_parameters = filter(lambda p: p.requires_grad, learner.policy.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    print(bold, underline, pink, params, endc)
-    
     config = {"policyModelShape": learner.policy, "valueNetModelShape": learner.valnet, "numGames":numGames, "opponentSamplingWeight":opponentSamplingWeight, "matchSize":matchSize, "discount":discount, "testEvery":testEvery, "policyLR":plr,"valueLR":vlr, "numTestGames":testMatchSize, "wrThresh":wrThresh, "boardShape":boardShape, "showTestGames":showTestGames, "optimizer":learner.policy.opt.state_dict(), "valueScale":valueScale}
     wandb.init(project="vpoc4", config=config, dir="E:\\wgmn\\")
     wandb.watch((learner.policy, learner.valnet), log="all", log_freq=10)
@@ -223,8 +228,7 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
             learner.train()
             matchWR = (torch.sum(torch.sign(m_vals[:testMatchSize])).item()/(testMatchSize) + 1)/2
             beatBest = matchWR >= wrThresh
-            #if beatBest:
-            if False: ##########################################################################
+            if beatBest and 0: #################################################################################################
                 opponents.append(learner.policyStateDict())
                 lastwinWR = matchWR
                 if saveDir is not None: learner.save(saveDir, f"{match}")
@@ -240,11 +244,7 @@ def train(saveDir, loadDir=None, rollback=0,boardShape=(6,7),numGames=100_000_00
                 opponent.loadPolicy(opponents[op])
                 __, __, valll, __ = playAgentMatch(learner, opponent, boardShape, matchSize)
                 scores[op] += torch.sum(valll).item()
-            
             playWithUser(learner)
-            plt.plot(scores)
-            plt.show()
-            enumerate()
 
         wandb.log({"gameLength": numTurns/matchSize, "pred_acc":pred_acc, "vloss":vloss, "ploss":ploss, "matchWR":matchWR, "numAgents":len(opponents), "score":torch.sum(val).item(), "pred_acc":pred_acc}, step=match*matchSize)
         t.set_description(desc + purple)
@@ -261,19 +261,19 @@ if __name__ == "__main__":
           loadDir=None,
           rollback=0,
           boardShape=(6,7),
-          numGames=20000000000,
+          numGames=200000000,
           opponentSamplingWeight=3,
           showTestGames=False,
           valueScale=1,
           discount=0.8,
           examineEvery=5000000000,
-          matchSize=1,
-          testMatchSize=1,
+          matchSize=30,
+          testMatchSize=30,
           testEvery=3000,
           wrThresh=0.570,
-          plr=0.005,
-          vlr=0.005,
-          weightDecay=0.0003,
+          plr=0.1,
+          vlr=0.02,
+          weightDecay=0.003,
           adam=False,
           cuda=True)
 

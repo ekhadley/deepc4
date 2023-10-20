@@ -68,6 +68,8 @@ def printBoard(board_, colors=True):
     if boards.ndim == 3: return printBoard_(boards, colors=colors)
     return [printBoard_(b, colors=colors) for b in boards]
 
+def fromt(t: torch.Tensor): return t.cpu().detach().numpy()
+
 if __name__ == "__main__":
     val = -1
     numTurns = 10

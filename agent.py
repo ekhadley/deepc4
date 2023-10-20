@@ -1,6 +1,6 @@
 from utils import *
+from nets import *
 from c4 import drop
-from nets import PolicyNet, ValueNet
 
 class vpoAgent:
     def __init__(self, boardShape, color, memSize=10_000, vlr=0.001, plr=.001, stationary=True, cuda=False, wd=0.003, adam=False):
@@ -12,7 +12,8 @@ class vpoAgent:
         self.wd = wd
         self.memSize = memSize
         
-        self.policy = PolicyNet(boardShape, lr=plr, stationary=stationary, cuda=cuda, wd=self.wd, adam=adam)
+        #self.policy = policyNet(boardShape, lr=plr, stationary=stationary, cuda=cuda, wd=self.wd, adam=adam)
+        self.policy = tinyPolicyNet(boardShape, lr=plr, stationary=stationary, cuda=cuda, wd=self.wd, adam=adam)
         self.valnet = ValueNet(boardShape, lr=vlr, stationary=stationary, cuda=cuda, wd=self.wd, adam=adam)
 
         self.dist_ = torch.distributions.Categorical(torch.tensor([1/self.numActions]*self.numActions))
@@ -23,12 +24,8 @@ class vpoAgent:
     def chooseAction(self, state:torch.Tensor):
         if state.ndim == 3: state = state.unsqueeze(0)
         dist = self.policy(state)
-        try:
-            self.dist_.probs = dist
-            action = self.dist_.sample()
-        except RuntimeError:
-            cat = torch.distributions.Categorical(dist)
-            action = cat.sample()
+        cat = torch.distributions.Categorical(dist)
+        action = cat.sample()
         return dist, action
 
     def drop(self, board, col):
@@ -36,14 +33,16 @@ class vpoAgent:
     
     @torch.no_grad()
     def observe(self, board):
-        assert board.ndim == 4
+        assert board.ndim == 4, f"board.shape={board.shape}, expected ndim=4"
         if self.color: return torch.flip(board, dims=(1,))
         return board
     
     def train(self):
-        states = self.states[:self.recorded_steps]
-        actions = self.actions[:self.recorded_steps]
-        outcomes = self.weights[:self.recorded_steps]
+        #states = self.states[:self.recorded_steps]
+        p = torch.randperm(self.recorded_steps)
+        states = self.states[:self.recorded_steps][p]
+        actions = self.actions[:self.recorded_steps][p]
+        outcomes = self.weights[:self.recorded_steps][p]
         weights = self.valnet(states).detach()
         _, vloss, acc = self.valnet.train_valnet(states, outcomes)
         ploss = self.policy.train_policy(states, actions, outcomes) # uses the unweighted outcomes
@@ -62,9 +61,9 @@ class vpoAgent:
     def resetMem(self):
         self.states, self.actions, self.weights, self.recorded_steps = self.getBlankMem()
     def getBlankMem(self):
-        yield torch.zeros((self.memSize, 2, *self.boardShape), dtype=torch.float32, device=self.device)
-        yield torch.zeros((self.memSize, self.numActions), dtype=torch.float32, device=self.device)
-        yield torch.zeros((self.memSize), dtype=torch.float32, device=self.device)
+        yield torch.zeros((self.memSize, 2, *self.boardShape), dtype=torch.float32, device=self.device, requires_grad=False)
+        yield torch.zeros((self.memSize, self.numActions), dtype=torch.float32, device=self.device, requires_grad=False)
+        yield torch.zeros((self.memSize), dtype=torch.float32, device=self.device, requires_grad=False)
         yield 0
 
     def save(self, path, name):

@@ -29,19 +29,19 @@ def getmask(cnct, device="cpu"):
     return torch.tensor(mask, dtype=torch.float32).to(device)
 
 class valuator: 
-        def __init__(self, cnct=4):
-            self.m = getmask(cnct, device="cpu")
-            self.mcuda = getmask(cnct, device="cuda")
+    def __init__(self, cnct=4):
+        self.m = getmask(cnct, device="cpu")
+        self.mcuda = getmask(cnct, device="cuda")
 
-        @torch.no_grad()
-        def __call__(self, board):
-            m = self.mcuda if board.is_cuda else self.m
-            if board.ndim == 3: board = board.unsqueeze(0)
-            zz0 = F.conv2d(board[:,0].unsqueeze(1), m)
-            zz1 = F.conv2d(board[:,1].unsqueeze(1), m)
-            v1 = 1*(torch.amax(zz0, dim=(1,2,3)) >= 4)
-            v2 = 1*(torch.amax(zz1, dim=(1,2,3)) >= 4)
-            return v1 - v2
+    @torch.no_grad()
+    def __call__(self, board):
+        m = self.mcuda if board.is_cuda else self.m
+        if board.ndim == 3: board = board.unsqueeze(0)
+        zz0 = F.conv2d(board[:,0].unsqueeze(1), m)
+        zz1 = F.conv2d(board[:,1].unsqueeze(1), m)
+        v1 = 1*(torch.amax(zz0, dim=(1,2,3)) >= 4)
+        v2 = 1*(torch.amax(zz1, dim=(1,2,3)) >= 4)
+        return v1 - v2
 value = valuator()#singleton class for determining winning states. We do this so we can use the same mask for all boards instead of passing it around during training
 
 

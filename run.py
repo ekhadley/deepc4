@@ -269,7 +269,7 @@ if __name__ == "__main__":
           examineEvery=5000000000,
           matchSize=30,
           testMatchSize=30,
-          testEvery=3000,
+          testEvery=300,
           wrThresh=0.570,
           plr=0.1,
           vlr=0.02,

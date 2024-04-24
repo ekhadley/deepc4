@@ -32,6 +32,7 @@ class valuator:
     def __init__(self, cnct=4):
         self.m = getmask(cnct, device="cpu")
         self.mcuda = getmask(cnct, device="cuda")
+        self.cnct = cnct
 
     @torch.no_grad()
     def __call__(self, board):
@@ -39,8 +40,8 @@ class valuator:
         if board.ndim == 3: board = board.unsqueeze(0)
         zz0 = F.conv2d(board[:,0].unsqueeze(1), m)
         zz1 = F.conv2d(board[:,1].unsqueeze(1), m)
-        v1 = 1*(torch.amax(zz0, dim=(1,2,3)) >= 4)
-        v2 = 1*(torch.amax(zz1, dim=(1,2,3)) >= 4)
+        v1 = 1*(torch.amax(zz0, dim=(1,2,3)) >= self.cnct)
+        v2 = 1*(torch.amax(zz1, dim=(1,2,3)) >= self.cnct)
         return v1 - v2
 value = valuator()#singleton class for determining winning states. We do this so we can use the same mask for all boards instead of passing it around during training
 
@@ -72,4 +73,5 @@ if __name__ == "__main__":
     b.to("cuda")
     for i in trange(1_000_000, ncols=120):
         b = drop(b, acts, 0)
+        value(b)
 

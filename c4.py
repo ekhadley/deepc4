@@ -67,11 +67,11 @@ if __name__ == "__main__":
 
     b = newBoard((100,6,7))
     acts = torch.tensor(np.random.randint(0, 6, size=(100)))
-    print(acts)
+    b = drop(b, acts, 0)
 
 
     b.to("cuda")
     for i in trange(1_000_000, ncols=120):
-        b = drop(b, acts, 0)
-        value(b)
+        drop(b, acts, 0)
+        #value(b)
 
